@@ -1,0 +1,24 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  font-family: 'Inter', system-ui, sans-serif;
+  background-color: #F4F5F7;
+  color: #1A1A2E;
+}
+.badge-healthy  { background:#D1FAE5;color:#065F46;border:1px solid #A7F3D0; }
+.badge-degraded { background:#FEF3C7;color:#92400E;border:1px solid #FDE68A; }
+.badge-down     { background:#FEE2E2;color:#991B1B;border:1px solid #FECACA; }
+.badge-critical { background:#FEE2E2;color:#991B1B;border:1px solid #FECACA; }
+.badge-high     { background:#FFEDD5;color:#9A3412;border:1px solid #FED7AA; }
+.badge-medium   { background:#FEF9C3;color:#713F12;border:1px solid #FEF08A; }
+.badge-low      { background:#DBEAFE;color:#1E40AF;border:1px solid #BFDBFE; }
+.badge-npci     { background:#FEE2E2;color:#991B1B;border:1px solid #FECACA; }
+.badge-bank     { background:#FFEDD5;color:#9A3412;border:1px solid #FED7AA; }
+.badge-unknown  { background:#F3F4F6;color:#374151;border:1px solid #E5E7EB; }
+.badge-false    { background:#D1FAE5;color:#065F46;border:1px solid #A7F3D0; }
+@keyframes livepulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+.live-dot { animation: livepulse 1.5s ease-in-out infinite; }
