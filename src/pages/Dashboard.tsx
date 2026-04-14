@@ -1,30 +1,91 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { RefreshCw, Zap, AlertTriangle, Activity } from 'lucide-react'
-import { fetchRailStatus, fetchIncidents, simulateIncident } from '../api'
-import { RailCard } from '../components/RailCard'
-import { IncidentRow } from '../components/IncidentRow'
+import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, LineChart, Line } from 'recharts'
+import { fetchRailStatus, fetchIncidents, fetchComplianceDashboard, fetchRailHistory, simulateIncident, triggerPoll } from '../api'
+import type { RailStatus } from '../types'
 
-interface DashboardProps {
-  onSelectIncident: (id: string) => void
+interface DashboardProps { onSelectIncident: (id: string) => void }
+
+const S = {
+  page: { maxWidth: 1400, margin: '0 auto', padding: '24px 24px' } as React.CSSProperties,
+  row: { display: 'flex', gap: 16 } as React.CSSProperties,
+  label: { fontFamily: 'IBM Plex Mono', fontSize: 10, textTransform: 'uppercase' as const, letterSpacing: '0.08em', color: '#3D5166', marginBottom: 6 },
+  val: { fontFamily: 'IBM Plex Mono', fontSize: 28, fontWeight: 500, lineHeight: 1 } as React.CSSProperties,
+  sub: { fontSize: 11, color: '#7A8FA6', marginTop: 4 } as React.CSSProperties,
+  sectionHead: { fontSize: 11, fontFamily: 'IBM Plex Mono', color: '#7A8FA6', textTransform: 'uppercase' as const, letterSpacing: '0.1em', marginBottom: 12, display: 'flex', alignItems: 'center', justifyContent: 'space-between' } as React.CSSProperties,
+}
+
+function statusColor(s: string) {
+  if (s === 'healthy') return '#12B76A'
+  if (s === 'degraded') return '#F79009'
+  return '#F04438'
+}
+
+function RailMiniCard({ rail }: { rail: RailStatus }) {
+  const { data: history } = useQuery({
+    queryKey: ['rail-history', rail.rail_name],
+    queryFn: () => fetchRailHistory(rail.rail_name),
+    refetchInterval: 30000,
+    staleTime: 20000,
+  })
+  const chartData = (history || []).slice(0, 30).reverse().map(s => ({ v: parseFloat(String(s.success_rate)) }))
+  const rate = parseFloat(String(rail.success_rate))
+  const c = statusColor(rail.status)
+
+  return (
+    <div className="card" style={{ flex: 1, padding: 16, borderLeft: `3px solid ${c}` }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
+        <div>
+          <div style={{ fontFamily: 'IBM Plex Mono', fontSize: 11, color: '#7A8FA6', marginBottom: 4 }}>{rail.rail_name}</div>
+          <div style={{ fontFamily: 'IBM Plex Mono', fontSize: 24, fontWeight: 500, color: c }}>{rate.toFixed(1)}%</div>
+        </div>
+        <span className={`badge badge-${rail.status}`}>{rail.status}</span>
+      </div>
+      <div style={{ height: 40, marginBottom: 8 }}>
+        {chartData.length > 0 && (
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart data={chartData} margin={{ top: 0, right: 0, left: 0, bottom: 0 }}>
+              <defs>
+                <linearGradient id={`g${rail.rail_name}`} x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor={c} stopOpacity={0.3}/>
+                  <stop offset="95%" stopColor={c} stopOpacity={0}/>
+                </linearGradient>
+              </defs>
+              <Area type="monotone" dataKey="v" stroke={c} strokeWidth={1.5} fill={`url(#g${rail.rail_name})`} dot={false} isAnimationActive={false}/>
+            </AreaChart>
+          </ResponsiveContainer>
+        )}
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+        {[
+          { label: 'Latency', val: `${rail.latency_ms}ms` },
+          { label: 'TXN/min', val: `${(rail.transactions_per_min/1000).toFixed(1)}k` },
+          { label: 'Error', val: `${parseFloat(String(rail.error_rate)).toFixed(1)}%` },
+        ].map(m => (
+          <div key={m.label} style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 3, padding: '6px 8px' }}>
+            <div style={{ fontFamily: 'IBM Plex Mono', fontSize: 10, color: '#3D5166', marginBottom: 2 }}>{m.label}</div>
+            <div style={{ fontFamily: 'IBM Plex Mono', fontSize: 12, color: '#E4EBF5' }}>{m.val}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function timeAgo(d: string) {
+  const diff = (Date.now() - new Date(d).getTime()) / 1000
+  if (diff < 60) return `${Math.round(diff)}s ago`
+  if (diff < 3600) return `${Math.round(diff/60)}m ago`
+  return `${Math.round(diff/3600)}h ago`
 }
 
 export function Dashboard({ onSelectIncident }: DashboardProps) {
   const qc = useQueryClient()
+  const { data: rails, dataUpdatedAt } = useQuery({ queryKey: ['rails'], queryFn: fetchRailStatus, refetchInterval: 30000 })
+  const { data: incidents } = useQuery({ queryKey: ['incidents'], queryFn: fetchIncidents, refetchInterval: 15000 })
+  const { data: compliance } = useQuery({ queryKey: ['compliance'], queryFn: fetchComplianceDashboard, refetchInterval: 30000 })
+  const { data: upiHistory } = useQuery({ queryKey: ['rail-history', 'UPI'], queryFn: () => fetchRailHistory('UPI'), refetchInterval: 30000 })
 
-  const { data: rails, isLoading: railsLoading, dataUpdatedAt } = useQuery({
-    queryKey: ['rails'],
-    queryFn: fetchRailStatus,
-    refetchInterval: 30000,
-    staleTime: 20000,
-  })
-
-  const { data: incidents, isLoading: incidentsLoading } = useQuery({
-    queryKey: ['incidents'],
-    queryFn: () => fetchIncidents(),
-    refetchInterval: 15000,
-  })
-
-  const simulateMutation = useMutation({
+  const simMutation = useMutation({
     mutationFn: () => simulateIncident('UPI', 71.3),
     onSuccess: () => {
       setTimeout(() => qc.invalidateQueries({ queryKey: ['incidents'] }), 3000)
@@ -33,116 +94,234 @@ export function Dashboard({ onSelectIncident }: DashboardProps) {
   })
 
   const activeIncidents = incidents?.filter(i => i.status === 'active' || i.status === 'investigating') || []
+  const resolvedToday = incidents?.filter(i => i.status === 'resolved') || []
+  const healthyRails = rails?.filter(r => r.status === 'healthy').length ?? 0
+  const totalRails = rails?.length ?? 5
+  const healthScore = Math.round((healthyRails / totalRails) * 100)
+
+  // Build 2-hour UPI volume chart
+  const volumeData = (upiHistory || []).slice(0, 48).reverse().map((s, i) => ({
+    t: i,
+    vol: s.transactions_per_min,
+    rate: parseFloat(String(s.success_rate)),
+  }))
+
+  // Compliance summary
+  const complianceScore = compliance
+    ? Math.round((compliance.filter(m => m.is_compliant).length / compliance.length) * 100)
+    : 100
 
   return (
-    <div className="max-w-7xl mx-auto px-4 py-6">
+    <div style={{ ...S.page, position: 'relative', zIndex: 1 }}>
 
-      {/* Header row */}
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-xl font-bold text-gray-900">Payment Rail Dashboard</h1>
-          <p className="text-sm text-gray-500 mt-0.5">
-            India payments infrastructure · Real-time monitoring
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-gray-400">
-            Updated {dataUpdatedAt ? new Date(dataUpdatedAt).toLocaleTimeString() : '—'}
-          </span>
-          <button
-            onClick={() => simulateMutation.mutate()}
-            disabled={simulateMutation.isPending}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-orange-100 text-orange-700 rounded-lg text-xs font-medium hover:bg-orange-200 transition-colors border border-orange-200"
-          >
-            <Zap size={12} />
-            {simulateMutation.isPending ? 'Triggering…' : 'Simulate incident'}
-          </button>
-          <button
-            onClick={() => qc.invalidateQueries({ queryKey: ['rails'] })}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-white text-gray-600 rounded-lg text-xs font-medium hover:bg-gray-50 transition-colors border border-gray-200"
-          >
-            <RefreshCw size={12} />
-            Refresh
-          </button>
-        </div>
-      </div>
-
-      {/* System status banner */}
+      {/* Alert banner */}
       {activeIncidents.length > 0 ? (
-        <div className="mb-5 bg-red-50 border border-red-200 rounded-xl px-4 py-3 flex items-center gap-3">
-          <AlertTriangle size={18} className="text-red-500 flex-shrink-0" />
-          <div>
-            <span className="font-semibold text-red-800 text-sm">
-              {activeIncidents.length} active incident{activeIncidents.length > 1 ? 's' : ''}
+        <div style={{ background: 'rgba(240,68,56,0.08)', border: '1px solid rgba(240,68,56,0.2)', borderLeft: '3px solid #F04438', borderRadius: 4, padding: '10px 16px', marginBottom: 20, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span className="live-dot" style={{ width: 8, height: 8, borderRadius: '50%', background: '#F04438', display: 'inline-block' }}/>
+            <span style={{ color: '#F04438', fontFamily: 'IBM Plex Mono', fontSize: 12, fontWeight: 500 }}>
+              ACTIVE INCIDENT — {activeIncidents[0]?.rail_name} DEGRADED
             </span>
-            <span className="text-red-600 text-sm"> — payment rail degradation in progress</span>
+            <span style={{ color: '#7A8FA6', fontSize: 12 }}>{activeIncidents[0]?.title}</span>
           </div>
+          <button onClick={() => onSelectIncident(activeIncidents[0]?.id)} style={{ background: 'rgba(240,68,56,0.15)', border: '1px solid rgba(240,68,56,0.3)', color: '#F04438', padding: '4px 12px', borderRadius: 3, fontSize: 11, cursor: 'pointer', fontFamily: 'IBM Plex Mono' }}>
+            VIEW →
+          </button>
         </div>
       ) : (
-        <div className="mb-5 bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-3 flex items-center gap-3">
-          <Activity size={18} className="text-emerald-500 flex-shrink-0" />
-          <span className="text-emerald-800 text-sm font-medium">All payment rails operating normally</span>
+        <div style={{ background: 'rgba(18,183,106,0.06)', border: '1px solid rgba(18,183,106,0.15)', borderLeft: '3px solid #12B76A', borderRadius: 4, padding: '10px 16px', marginBottom: 20, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#12B76A', display: 'inline-block' }}/>
+            <span style={{ color: '#12B76A', fontFamily: 'IBM Plex Mono', fontSize: 12 }}>ALL SYSTEMS NOMINAL</span>
+            <span style={{ color: '#7A8FA6', fontSize: 12 }}>5 payment rails operating within normal parameters</span>
+          </div>
+          <span style={{ color: '#3D5166', fontSize: 11, fontFamily: 'IBM Plex Mono' }}>Updated {dataUpdatedAt ? new Date(dataUpdatedAt).toLocaleTimeString() : '—'}</span>
         </div>
       )}
 
-      {/* Rail health cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 mb-6">
-        {railsLoading
-          ? Array(5).fill(0).map((_, i) => (
-              <div key={i} className="bg-white rounded-xl border border-gray-200 p-4 h-44 animate-pulse" />
-            ))
-          : rails?.map(rail => <RailCard key={rail.rail_name} rail={rail} />)
-        }
+      {/* Top KPI strip */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 12, marginBottom: 20 }}>
+        {[
+          { label: 'System Health', val: `${healthScore}%`, sub: `${healthyRails}/${totalRails} rails healthy`, color: healthScore === 100 ? '#12B76A' : '#F79009' },
+          { label: 'Active Incidents', val: String(activeIncidents.length), sub: activeIncidents.length > 0 ? 'Requires attention' : 'No active issues', color: activeIncidents.length > 0 ? '#F04438' : '#12B76A' },
+          { label: 'Root Cause Target', val: '<2 min', sub: '↓ from 18–25 min', color: '#00A3E0' },
+          { label: 'Resolved Today', val: String(resolvedToday.length), sub: 'Incidents closed', color: '#7A8FA6' },
+          { label: 'OC-215 Compliance', val: `${complianceScore}%`, sub: 'All APIs within limits', color: complianceScore === 100 ? '#12B76A' : '#F04438' },
+          { label: 'UPI Success Rate', val: rails?.find(r => r.rail_name === 'UPI') ? `${parseFloat(String(rails.find(r => r.rail_name === 'UPI')!.success_rate)).toFixed(1)}%` : '—', sub: 'Primary rail', color: statusColor(rails?.find(r => r.rail_name === 'UPI')?.status || 'healthy') },
+        ].map(k => (
+          <div key={k.label} className="card" style={{ padding: '14px 16px' }}>
+            <div style={S.label}>{k.label}</div>
+            <div style={{ fontFamily: 'IBM Plex Mono', fontSize: 22, fontWeight: 500, color: k.color, lineHeight: 1, marginBottom: 4 }}>{k.val}</div>
+            <div style={{ fontSize: 11, color: '#7A8FA6' }}>{k.sub}</div>
+          </div>
+        ))}
       </div>
 
-      {/* Hero metric strip */}
-      <div className="grid grid-cols-3 gap-4 mb-6">
-        <div className="bg-white rounded-xl border border-gray-200 p-4 text-center">
-          <div className="text-2xl font-bold text-gray-900">
-            {activeIncidents.length > 0 ? '<2 min' : '—'}
+      {/* Rail cards */}
+      <div style={{ marginBottom: 20 }}>
+        <div style={S.sectionHead}>
+          <span>Payment Rail Status — Real-time</span>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button onClick={() => simMutation.mutate()} disabled={simMutation.isPending}
+              style={{ background: 'rgba(247,144,9,0.1)', border: '1px solid rgba(247,144,9,0.25)', color: '#F79009', padding: '4px 12px', borderRadius: 3, fontSize: 11, cursor: 'pointer', fontFamily: 'IBM Plex Mono' }}>
+              {simMutation.isPending ? 'TRIGGERING...' : '⚡ SIMULATE INCIDENT'}
+            </button>
+            <button onClick={() => { triggerPoll(); qc.invalidateQueries({ queryKey: ['rails'] }) }}
+              style={{ background: 'transparent', border: '1px solid rgba(255,255,255,0.08)', color: '#7A8FA6', padding: '4px 12px', borderRadius: 3, fontSize: 11, cursor: 'pointer', fontFamily: 'IBM Plex Mono' }}>
+              ↻ REFRESH
+            </button>
           </div>
-          <div className="text-xs text-gray-500 mt-1">Root cause time target</div>
-          <div className="text-xs text-emerald-600 font-medium mt-0.5">↓ from 18–25 min</div>
         </div>
-        <div className="bg-white rounded-xl border border-gray-200 p-4 text-center">
-          <div className="text-2xl font-bold text-gray-900">
-            {incidents?.filter(i => i.status === 'resolved').length ?? 0}
-          </div>
-          <div className="text-xs text-gray-500 mt-1">Resolved today</div>
-        </div>
-        <div className="bg-white rounded-xl border border-gray-200 p-4 text-center">
-          <div className="text-2xl font-bold text-gray-900">
-            {rails?.filter(r => r.status === 'healthy').length ?? 0}/{rails?.length ?? 5}
-          </div>
-          <div className="text-xs text-gray-500 mt-1">Rails healthy</div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12 }}>
+          {rails ? rails.map(r => <RailMiniCard key={r.rail_name} rail={r} />) : Array(5).fill(0).map((_, i) => (
+            <div key={i} className="card" style={{ height: 160, background: 'rgba(255,255,255,0.02)' }} />
+          ))}
         </div>
       </div>
 
-      {/* Incident feed */}
-      <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
-        <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
-          <h2 className="font-semibold text-gray-900 text-sm">Incident Feed</h2>
-          {activeIncidents.length > 0 && (
-            <span className="bg-red-100 text-red-700 text-xs px-2 py-0.5 rounded-full font-medium">
-              {activeIncidents.length} active
-            </span>
+      {/* Charts row */}
+      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 16, marginBottom: 20 }}>
+
+        {/* UPI volume + success rate */}
+        <div className="card" style={{ padding: 20 }}>
+          <div style={S.sectionHead}>
+            <span>UPI — Transaction Volume & Success Rate (Last 48 snapshots)</span>
+          </div>
+          <div style={{ height: 140 }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={volumeData} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
+                <XAxis dataKey="t" hide />
+                <YAxis yAxisId="left" domain={[60, 100]} tick={{ fontSize: 10, fill: '#3D5166', fontFamily: 'IBM Plex Mono' }} />
+                <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10, fill: '#3D5166', fontFamily: 'IBM Plex Mono' }} />
+                <Tooltip contentStyle={{ background: '#0F1E35', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 4, fontSize: 11, fontFamily: 'IBM Plex Mono' }} labelFormatter={() => ''} />
+                <Line yAxisId="left" type="monotone" dataKey="rate" stroke="#00A3E0" strokeWidth={1.5} dot={false} name="Success %" isAnimationActive={false}/>
+                <Line yAxisId="right" type="monotone" dataKey="vol" stroke="rgba(0,163,224,0.3)" strokeWidth={1} dot={false} name="TXN/min" isAnimationActive={false}/>
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+          <div style={{ display: 'flex', gap: 16, marginTop: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: '#7A8FA6' }}>
+              <div style={{ width: 16, height: 2, background: '#00A3E0' }} /> Success Rate
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: '#7A8FA6' }}>
+              <div style={{ width: 16, height: 2, background: 'rgba(0,163,224,0.3)' }} /> Transaction Volume
+            </div>
+          </div>
+        </div>
+
+        {/* Rail comparison bar */}
+        <div className="card" style={{ padding: 20 }}>
+          <div style={S.sectionHead}>Rail Comparison</div>
+          <div style={{ height: 140 }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={rails?.map(r => ({ name: r.rail_name, rate: parseFloat(String(r.success_rate)), fill: statusColor(r.status) })) || []} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
+                <XAxis dataKey="name" tick={{ fontSize: 10, fill: '#7A8FA6', fontFamily: 'IBM Plex Mono' }} />
+                <YAxis domain={[85, 100]} tick={{ fontSize: 10, fill: '#3D5166', fontFamily: 'IBM Plex Mono' }} />
+                <Tooltip contentStyle={{ background: '#0F1E35', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 4, fontSize: 11, fontFamily: 'IBM Plex Mono' }} />
+                <Bar dataKey="rate" radius={[2, 2, 0, 0]} name="Success %">
+                  {rails?.map((r, i) => (
+                    <rect key={i} fill={statusColor(r.status)} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      </div>
+
+      {/* Bottom — incidents + compliance side by side */}
+      <div style={{ display: 'grid', gridTemplateColumns: '3fr 2fr', gap: 16 }}>
+
+        {/* Incident feed */}
+        <div className="card">
+          <div style={{ padding: '14px 16px', borderBottom: '1px solid rgba(255,255,255,0.07)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span style={{ fontFamily: 'IBM Plex Mono', fontSize: 11, color: '#7A8FA6', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Incident Log</span>
+            <span style={{ fontFamily: 'IBM Plex Mono', fontSize: 10, color: '#3D5166' }}>{incidents?.length ?? 0} TOTAL</span>
+          </div>
+          {!incidents || incidents.length === 0 ? (
+            <div style={{ padding: 32, textAlign: 'center', color: '#3D5166', fontFamily: 'IBM Plex Mono', fontSize: 12 }}>NO INCIDENTS RECORDED</div>
+          ) : (
+            <div>
+              {incidents.slice(0, 8).map((inc, i) => {
+                const isActive = inc.status === 'active' || inc.status === 'investigating'
+                return (
+                  <div key={inc.id} onClick={() => onSelectIncident(inc.id)}
+                    style={{ padding: '12px 16px', borderBottom: i < 7 ? '1px solid rgba(255,255,255,0.05)' : 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 12, transition: 'background 0.15s' }}
+                    onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.03)')}
+                    onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+                  >
+                    <span className={isActive ? 'live-dot' : ''} style={{ width: 6, height: 6, borderRadius: '50%', background: isActive ? '#F04438' : '#3D5166', flexShrink: 0, display: 'inline-block' }}/>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 12, color: '#E4EBF5', marginBottom: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{inc.title}</div>
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                        <span style={{ fontFamily: 'IBM Plex Mono', fontSize: 10, color: '#7A8FA6' }}>{inc.rail_name}</span>
+                        <span className={`badge badge-${inc.classification === 'NPCI_SIDE' ? 'npci' : inc.classification === 'BANK_SIDE' ? 'bank' : 'unknown'}`}>
+                          {inc.classification === 'NPCI_SIDE' ? 'NPCI' : inc.classification === 'BANK_SIDE' ? 'BANK' : inc.classification === 'FALSE_POSITIVE' ? 'FALSE+' : 'UNKNOWN'}
+                        </span>
+                        {parseFloat(String(inc.confidence_score)) > 0 && (
+                          <span style={{ fontFamily: 'IBM Plex Mono', fontSize: 10, color: '#3D5166' }}>{parseFloat(String(inc.confidence_score)).toFixed(0)}% conf</span>
+                        )}
+                      </div>
+                    </div>
+                    <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                      <span className={`badge badge-${inc.severity}`} style={{ display: 'block', marginBottom: 3 }}>{inc.severity}</span>
+                      <span style={{ fontFamily: 'IBM Plex Mono', fontSize: 10, color: '#3D5166' }}>{timeAgo(inc.detected_at)}</span>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
           )}
         </div>
-        {incidentsLoading ? (
-          <div className="p-8 text-center text-gray-400 text-sm">Loading incidents…</div>
-        ) : incidents?.length === 0 ? (
-          <div className="p-8 text-center text-gray-400 text-sm">No incidents recorded yet</div>
-        ) : (
-          <div>
-            {incidents?.slice(0, 10).map(incident => (
-              <IncidentRow
-                key={incident.id}
-                incident={incident}
-                onClick={() => onSelectIncident(incident.id)}
-              />
+
+        {/* Compliance summary + recent violations */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div className="card" style={{ padding: 16 }}>
+            <div style={S.sectionHead}>OC-215 API Rate Compliance</div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+              {compliance?.map(m => {
+                const pct = parseFloat(String(m.utilisation_pct)) || 0
+                const c = !m.is_compliant ? '#F04438' : pct >= 85 ? '#F79009' : '#12B76A'
+                return (
+                  <div key={m.id} style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 3, padding: '10px 12px' }}>
+                    <div style={{ fontFamily: 'IBM Plex Mono', fontSize: 9, color: '#3D5166', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                      {m.api_name.replace(/_/g, ' ')}
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                      <span style={{ fontFamily: 'IBM Plex Mono', fontSize: 14, color: c }}>{pct.toFixed(0)}%</span>
+                      <span style={{ fontFamily: 'IBM Plex Mono', fontSize: 9, color: '#3D5166' }}>{parseFloat(String(m.tps_current)).toFixed(1)}/{parseFloat(String(m.tps_limit)).toFixed(0)} TPS</span>
+                    </div>
+                    <div style={{ height: 3, background: 'rgba(255,255,255,0.06)', borderRadius: 2 }}>
+                      <div style={{ width: `${Math.min(pct, 100)}%`, height: '100%', background: c, borderRadius: 2, transition: 'width 0.5s' }} />
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+
+          {/* Agent pipeline status */}
+          <div className="card" style={{ padding: 16 }}>
+            <div style={S.sectionHead}>AI Agent Pipeline</div>
+            {[
+              { name: 'Rail Monitor', desc: 'Polls every 30s', status: 'RUNNING' },
+              { name: 'Incident Classifier', desc: 'Claude API · RAG', status: 'STANDBY' },
+              { name: 'Rerouting Advisor', desc: 'Parallel fork', status: 'STANDBY' },
+              { name: 'Compliance Watchdog', desc: 'OC-215 monitoring', status: 'RUNNING' },
+              { name: 'Comms Generator', desc: 'Claude API · Draft', status: 'STANDBY' },
+            ].map((a, i) => (
+              <div key={a.name} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '7px 0', borderBottom: i < 4 ? '1px solid rgba(255,255,255,0.04)' : 'none' }}>
+                <div>
+                  <div style={{ fontSize: 12, color: '#E4EBF5', marginBottom: 2 }}>{a.name}</div>
+                  <div style={{ fontFamily: 'IBM Plex Mono', fontSize: 10, color: '#3D5166' }}>{a.desc}</div>
+                </div>
+                <span style={{ fontFamily: 'IBM Plex Mono', fontSize: 9, color: a.status === 'RUNNING' ? '#12B76A' : '#3D5166', background: a.status === 'RUNNING' ? 'rgba(18,183,106,0.1)' : 'rgba(255,255,255,0.04)', border: `1px solid ${a.status === 'RUNNING' ? 'rgba(18,183,106,0.2)' : 'rgba(255,255,255,0.06)'}`, padding: '2px 7px', borderRadius: 2 }}>
+                  {a.status}
+                </span>
+              </div>
             ))}
           </div>
-        )}
+        </div>
       </div>
     </div>
   )

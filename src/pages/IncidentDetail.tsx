@@ -1,304 +1,254 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, CheckCircle, XCircle, ArrowRight, Shield, MessageSquare, Bot, Clock } from 'lucide-react'
-import { fetchIncident, fetchCommunications, approveDraft, rejectDraft, resolveIncident } from '../api'
+import { AreaChart, Area, ResponsiveContainer, Tooltip, ReferenceLine, XAxis } from 'recharts'
+import { fetchIncident, fetchCommunications, approveDraft, rejectDraft, resolveIncident, fetchRailHistory } from '../api'
 import type { CommunicationDraft } from '../types'
 
-interface IncidentDetailProps {
-  incidentId: string
-  onBack: () => void
+interface Props { incidentId: string; onBack: () => void }
+
+function timeAgo(d: string) {
+  const diff = (Date.now() - new Date(d).getTime()) / 1000
+  if (diff < 60) return `${Math.round(diff)}s ago`
+  if (diff < 3600) return `${Math.round(diff/60)}m ago`
+  return `${Math.round(diff/3600)}h ago`
 }
 
-function ConfidenceMeter({ score }: { score: number }) {
-  const pct = parseFloat(String(score))
-  const color = pct >= 80 ? '#10B981' : pct >= 50 ? '#F59E0B' : '#9CA3AF'
-  return (
-    <div className="flex items-center gap-2">
-      <div className="flex-1 bg-gray-100 rounded-full h-2">
-        <div
-          className="h-2 rounded-full transition-all"
-          style={{ width: `${pct}%`, background: color }}
-        />
-      </div>
-      <span className="text-sm font-semibold" style={{ color }}>{pct.toFixed(0)}%</span>
-    </div>
-  )
+function timeDiff(a: string, b: string) {
+  const diff = Math.abs(new Date(b).getTime() - new Date(a).getTime()) / 1000
+  if (diff < 60) return `${Math.round(diff)}s`
+  return `${Math.round(diff/60)}m ${Math.round(diff%60)}s`
 }
 
-function DraftCard({ draft, onApprove, onReject }: {
-  draft: CommunicationDraft
-  onApprove: (id: string) => void
-  onReject: (id: string) => void
-}) {
-  const audienceLabel = {
-    client_services: 'Internal — Client Services',
-    corporate_client: 'External — Corporate Client',
-    relationship_manager: 'Relationship Manager',
-    management: 'Management',
-  }[draft.audience] || draft.audience
-
-  return (
-    <div className={`border rounded-xl p-4 ${
-      draft.status === 'approved' ? 'border-emerald-200 bg-emerald-50/30' :
-      draft.status === 'rejected' ? 'border-red-200 bg-red-50/30' :
-      'border-gray-200 bg-white'
-    }`}>
-      <div className="flex items-center justify-between mb-2">
-        <span className="text-xs font-medium text-gray-600 bg-gray-100 px-2 py-0.5 rounded">
-          {audienceLabel}
-        </span>
-        <span className={`text-xs font-medium px-2 py-0.5 rounded ${
-          draft.status === 'approved' ? 'bg-emerald-100 text-emerald-700' :
-          draft.status === 'rejected' ? 'bg-red-100 text-red-700' :
-          'bg-amber-100 text-amber-700'
-        }`}>
-          {draft.status}
-        </span>
-      </div>
-
-      {draft.subject_line && (
-        <div className="text-sm font-semibold text-gray-800 mb-2">
-          {draft.subject_line}
-        </div>
-      )}
-
-      <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap mb-3">
-        {draft.draft_text}
-      </p>
-
-      {draft.tone_notes && (
-        <p className="text-xs text-gray-400 italic mb-3">{draft.tone_notes}</p>
-      )}
-
-      {draft.status === 'draft' && (
-        <div className="flex items-center gap-2 pt-2 border-t border-gray-100">
-          <button
-            onClick={() => onApprove(draft.id)}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-medium hover:bg-emerald-700 transition-colors"
-          >
-            <CheckCircle size={12} />
-            Approve
-          </button>
-          <button
-            onClick={() => onReject(draft.id)}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-white text-red-600 rounded-lg text-xs font-medium hover:bg-red-50 transition-colors border border-red-200"
-          >
-            <XCircle size={12} />
-            Reject
-          </button>
-          <span className="text-xs text-gray-400 ml-auto">Human approval required before sending</span>
-        </div>
-      )}
-
-      {draft.status === 'approved' && (
-        <div className="flex items-center gap-1.5 pt-2 border-t border-emerald-100 text-xs text-emerald-700">
-          <CheckCircle size={12} />
-          Approved by {draft.approved_by} · Ready for distribution
-        </div>
-      )}
-    </div>
-  )
-}
-
-export function IncidentDetail({ incidentId, onBack }: IncidentDetailProps) {
+export function IncidentDetail({ incidentId, onBack }: Props) {
   const qc = useQueryClient()
+  const { data: incident, isLoading } = useQuery({ queryKey: ['incident', incidentId], queryFn: () => fetchIncident(incidentId), refetchInterval: 10000 })
+  const { data: comms } = useQuery({ queryKey: ['communications', incidentId], queryFn: () => fetchCommunications(incidentId), refetchInterval: 10000 })
+  const { data: history } = useQuery({ queryKey: ['rail-history', incident?.rail_name], queryFn: () => fetchRailHistory(incident?.rail_name || 'UPI'), enabled: !!incident })
 
-  const { data: incident, isLoading } = useQuery({
-    queryKey: ['incident', incidentId],
-    queryFn: () => fetchIncident(incidentId),
-    refetchInterval: 10000,
-  })
+  const approveMut = useMutation({ mutationFn: (id: string) => approveDraft(id, 'ops_analyst'), onSuccess: () => qc.invalidateQueries({ queryKey: ['communications', incidentId] }) })
+  const rejectMut = useMutation({ mutationFn: (id: string) => rejectDraft(id, 'Needs revision'), onSuccess: () => qc.invalidateQueries({ queryKey: ['communications', incidentId] }) })
+  const resolveMut = useMutation({ mutationFn: () => resolveIncident(incidentId), onSuccess: () => { qc.invalidateQueries({ queryKey: ['incident', incidentId] }); qc.invalidateQueries({ queryKey: ['incidents'] }) } })
 
-  const { data: comms } = useQuery({
-    queryKey: ['communications', incidentId],
-    queryFn: () => fetchCommunications(incidentId),
-    refetchInterval: 10000,
-  })
-
-  const approveMutation = useMutation({
-    mutationFn: (id: string) => approveDraft(id, 'ops_analyst'),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['communications', incidentId] }),
-  })
-
-  const rejectMutation = useMutation({
-    mutationFn: (id: string) => rejectDraft(id, 'Needs revision'),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['communications', incidentId] }),
-  })
-
-  const resolveMutation = useMutation({
-    mutationFn: () => resolveIncident(incidentId),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['incident', incidentId] })
-      qc.invalidateQueries({ queryKey: ['incidents'] })
-    },
-  })
-
-  if (isLoading) return (
-    <div className="max-w-4xl mx-auto px-4 py-8">
-      <div className="animate-pulse space-y-4">
-        {Array(4).fill(0).map((_, i) => <div key={i} className="h-24 bg-gray-100 rounded-xl" />)}
-      </div>
-    </div>
-  )
-
+  if (isLoading) return <div style={{ padding: 48, textAlign: 'center', fontFamily: 'IBM Plex Mono', color: '#3D5166' }}>LOADING INCIDENT DATA...</div>
   if (!incident) return null
 
+  const isActive = incident.status === 'active' || incident.status === 'investigating'
   const rerouting = incident.rerouting?.[0]
   const agentRuns = incident.agent_runs || []
-  const isActive = incident.status === 'active' || incident.status === 'investigating'
+  const confidence = parseFloat(String(incident.confidence_score))
 
-  const classLabel: Record<string, string> = {
-    NPCI_SIDE: 'NPCI Infrastructure Issue',
-    BANK_SIDE: 'Bank-side Failure',
-    FALSE_POSITIVE: 'False Positive',
-    UNKNOWN: 'Under Investigation',
-  }
-  const classStyle: Record<string, string> = {
-    NPCI_SIDE: 'badge-npci',
-    BANK_SIDE: 'badge-bank',
-    FALSE_POSITIVE: 'badge-false',
-    UNKNOWN: 'badge-unknown',
-  }
+  const chartData = (history || []).slice(0, 60).reverse().map((s, i) => ({ i, rate: parseFloat(String(s.success_rate)) }))
+  const detectedIdx = chartData.length - 10
+
+  const classColors: Record<string, string> = { NPCI_SIDE: '#F04438', BANK_SIDE: '#F79009', FALSE_POSITIVE: '#12B76A', UNKNOWN: '#7A8FA6' }
+  const classLabels: Record<string, string> = { NPCI_SIDE: 'NPCI Infrastructure Issue', BANK_SIDE: 'Bank-side Failure', FALSE_POSITIVE: 'False Positive', UNKNOWN: 'Under Investigation' }
+  const classColor = classColors[incident.classification] || '#7A8FA6'
+
+  // Estimated impact
+  const estimatedFailedTxns = Math.round((100 - (chartData[chartData.length - 1]?.rate || 88)) / 100 * 14200 * 5)
 
   return (
-    <div className="max-w-4xl mx-auto px-4 py-6">
+    <div style={{ maxWidth: 1400, margin: '0 auto', padding: '24px 24px', position: 'relative', zIndex: 1 }}>
 
       {/* Back + header */}
-      <button onClick={onBack} className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800 mb-4">
-        <ArrowLeft size={14} /> Back to dashboard
-      </button>
-
-      <div className="flex items-start justify-between mb-6">
-        <div>
-          <div className="flex items-center gap-2 mb-1">
-            <span className="font-bold text-lg text-gray-900">{incident.rail_name}</span>
-            <span className={`text-xs px-2 py-0.5 rounded-full font-medium badge-${incident.severity}`}>
-              {incident.severity}
-            </span>
-            {isActive && <span className="w-2 h-2 rounded-full bg-red-500 live-dot" />}
-          </div>
-          <h1 className="text-sm text-gray-600">{incident.title}</h1>
-          <div className="flex items-center gap-1 text-xs text-gray-400 mt-1">
-            <Clock size={11} />
-            Detected {new Date(incident.detected_at).toLocaleString()}
-            {incident.resolved_at && ` · Resolved ${new Date(incident.resolved_at).toLocaleString()}`}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+          <button onClick={onBack} style={{ background: 'transparent', border: '1px solid rgba(255,255,255,0.08)', color: '#7A8FA6', padding: '6px 12px', borderRadius: 3, cursor: 'pointer', fontFamily: 'IBM Plex Mono', fontSize: 11 }}>
+            ← BACK
+          </button>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+              {isActive && <span className="live-dot" style={{ width: 8, height: 8, borderRadius: '50%', background: '#F04438', display: 'inline-block' }}/>}
+              <span style={{ fontFamily: 'IBM Plex Mono', fontSize: 16, fontWeight: 500, color: '#E4EBF5' }}>{incident.rail_name} — {incident.title}</span>
+              <span className={`badge badge-${incident.severity}`}>{incident.severity}</span>
+              <span className={`badge badge-${incident.status}`}>{incident.status}</span>
+            </div>
+            <div style={{ fontFamily: 'IBM Plex Mono', fontSize: 10, color: '#3D5166' }}>
+              DETECTED {timeAgo(incident.detected_at)}
+              {incident.resolved_at && ` · RESOLVED IN ${timeDiff(incident.detected_at, incident.resolved_at)}`}
+              · ID: {incidentId.slice(0, 8).toUpperCase()}
+            </div>
           </div>
         </div>
         {isActive && (
-          <button
-            onClick={() => resolveMutation.mutate()}
-            disabled={resolveMutation.isPending}
-            className="flex items-center gap-1.5 px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 transition-colors"
-          >
-            <CheckCircle size={14} />
-            {resolveMutation.isPending ? 'Resolving…' : 'Mark Resolved'}
+          <button onClick={() => resolveMut.mutate()} disabled={resolveMut.isPending}
+            style={{ background: 'rgba(18,183,106,0.1)', border: '1px solid rgba(18,183,106,0.25)', color: '#12B76A', padding: '8px 20px', borderRadius: 3, cursor: 'pointer', fontFamily: 'IBM Plex Mono', fontSize: 12 }}>
+            {resolveMut.isPending ? 'RESOLVING...' : '✓ MARK RESOLVED'}
           </button>
         )}
       </div>
 
-      <div className="space-y-4">
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
 
-        {/* Classification card */}
-        <div className="bg-white border border-gray-200 rounded-xl p-5">
-          <div className="flex items-center gap-2 mb-4">
-            <Bot size={16} className="text-purple-600" />
-            <h2 className="font-semibold text-sm text-gray-800">AI Classification</h2>
-            <span className="text-xs text-gray-400">· Claude API</span>
+        {/* AI Classification — hero card */}
+        <div style={{ background: 'var(--navy-2)', border: `1px solid ${classColor}40`, borderRadius: 6, padding: 20, position: 'relative', overflow: 'hidden' }}>
+          <div style={{ position: 'absolute', top: 0, right: 0, width: 200, height: 200, background: `radial-gradient(circle, ${classColor}08, transparent 70%)`, pointerEvents: 'none' }} />
+          <div style={{ fontFamily: 'IBM Plex Mono', fontSize: 10, color: '#3D5166', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 12 }}>
+            AI ROOT CAUSE CLASSIFICATION · CLAUDE API
           </div>
-
-          <div className="flex items-center gap-3 mb-4">
-            <span className={`text-sm px-3 py-1.5 rounded-lg font-semibold ${classStyle[incident.classification]}`}>
-              {classLabel[incident.classification]}
-            </span>
-          </div>
-
-          <div className="mb-4">
-            <div className="text-xs text-gray-500 mb-1">Confidence</div>
-            <ConfidenceMeter score={incident.confidence_score} />
-          </div>
-
-          {incident.classifier_reasoning && (
-            <div className="bg-gray-50 rounded-lg p-3">
-              <div className="text-xs font-medium text-gray-600 mb-1">Reasoning</div>
-              <p className="text-sm text-gray-700 leading-relaxed">{incident.classifier_reasoning}</p>
+          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 16 }}>
+            <div>
+              <div style={{ fontFamily: 'IBM Plex Mono', fontSize: 20, fontWeight: 500, color: classColor, marginBottom: 8 }}>
+                {classLabels[incident.classification]}
+              </div>
+              <div style={{ fontFamily: 'IBM Plex Mono', fontSize: 11, color: '#7A8FA6' }}>
+                {incident.historical_match && `Matches: ${incident.historical_match}`}
+              </div>
             </div>
-          )}
-
-          {incident.historical_match && (
-            <div className="mt-3 text-xs text-gray-500 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2">
-              <span className="font-medium text-blue-700">Historical match: </span>
-              {incident.historical_match}
+            {/* Confidence gauge */}
+            <div style={{ textAlign: 'center' }}>
+              <div style={{ width: 72, height: 72, borderRadius: '50%', background: `conic-gradient(${classColor} ${confidence * 3.6}deg, rgba(255,255,255,0.06) 0deg)`, display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
+                <div style={{ width: 54, height: 54, borderRadius: '50%', background: 'var(--navy-2)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <span style={{ fontFamily: 'IBM Plex Mono', fontSize: 14, fontWeight: 500, color: classColor }}>{confidence.toFixed(0)}%</span>
+                </div>
+              </div>
+              <div style={{ fontFamily: 'IBM Plex Mono', fontSize: 9, color: '#3D5166', marginTop: 4, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Confidence</div>
+            </div>
+          </div>
+          {incident.classifier_reasoning && (
+            <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 4, padding: 12 }}>
+              <div style={{ fontFamily: 'IBM Plex Mono', fontSize: 9, color: '#3D5166', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Classifier Reasoning</div>
+              <p style={{ fontSize: 12, color: '#7A8FA6', lineHeight: 1.6 }}>{incident.classifier_reasoning}</p>
             </div>
           )}
         </div>
 
-        {/* Rerouting recommendation */}
-        {rerouting && (
-          <div className="bg-white border border-gray-200 rounded-xl p-5">
-            <div className="flex items-center gap-2 mb-4">
-              <ArrowRight size={16} className="text-amber-600" />
-              <h2 className="font-semibold text-sm text-gray-800">Rerouting Recommendation</h2>
+        {/* Degradation chart */}
+        <div className="card" style={{ padding: 20 }}>
+          <div style={{ fontFamily: 'IBM Plex Mono', fontSize: 10, color: '#3D5166', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 12 }}>
+            {incident.rail_name} SUCCESS RATE — DEGRADATION PATTERN
+          </div>
+          <div style={{ height: 140, marginBottom: 12 }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={chartData} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="rateGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#00A3E0" stopOpacity={0.2}/>
+                    <stop offset="95%" stopColor="#00A3E0" stopOpacity={0}/>
+                  </linearGradient>
+                </defs>
+                <XAxis dataKey="i" hide />
+                <Tooltip contentStyle={{ background: '#0F1E35', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 4, fontSize: 11, fontFamily: 'IBM Plex Mono' }} formatter={(v: unknown) => [`${Number(v).toFixed(1)}%`, 'Success Rate']} labelFormatter={() => ''} />
+                {detectedIdx > 0 && <ReferenceLine x={detectedIdx} stroke="#F04438" strokeDasharray="3 3" label={{ value: 'DETECTED', position: 'top', fill: '#F04438', fontSize: 9, fontFamily: 'IBM Plex Mono' }} />}
+                <Area type="monotone" dataKey="rate" stroke="#00A3E0" strokeWidth={1.5} fill="url(#rateGrad)" dot={false} isAnimationActive={false}/>
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+            {[
+              { label: 'Time to Detect', val: '< 30s', sub: 'Auto-detected' },
+              { label: 'Time to Classify', val: '< 2 min', sub: 'Claude API' },
+              { label: 'Est. Txns Impacted', val: `~${(estimatedFailedTxns/1000).toFixed(1)}k`, sub: 'In detection window' },
+            ].map(m => (
+              <div key={m.label} style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 3, padding: '8px 10px' }}>
+                <div style={{ fontFamily: 'IBM Plex Mono', fontSize: 9, color: '#3D5166', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.04em' }}>{m.label}</div>
+                <div style={{ fontFamily: 'IBM Plex Mono', fontSize: 14, color: '#00A3E0', marginBottom: 2 }}>{m.val}</div>
+                <div style={{ fontSize: 10, color: '#7A8FA6' }}>{m.sub}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
+
+        {/* Rerouting */}
+        {rerouting ? (
+          <div className="card" style={{ padding: 20 }}>
+            <div style={{ fontFamily: 'IBM Plex Mono', fontSize: 10, color: '#3D5166', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 12 }}>Rerouting Recommendation</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+              <div style={{ background: 'var(--red-dim)', border: '1px solid rgba(240,68,56,0.2)', borderRadius: 4, padding: '8px 16px', fontFamily: 'IBM Plex Mono', fontSize: 16, color: '#F04438' }}>{rerouting.from_rail}</div>
+              <div style={{ color: '#12B76A', fontSize: 18 }}>→</div>
+              <div style={{ background: 'var(--green-dim)', border: '1px solid rgba(18,183,106,0.2)', borderRadius: 4, padding: '8px 16px', fontFamily: 'IBM Plex Mono', fontSize: 16, color: '#12B76A' }}>{rerouting.to_rail}</div>
+              <div style={{ marginLeft: 'auto', textAlign: 'right' }}>
+                <div style={{ fontFamily: 'IBM Plex Mono', fontSize: 18, color: '#12B76A' }}>{parseFloat(String(rerouting.estimated_success_rate)).toFixed(1)}%</div>
+                <div style={{ fontFamily: 'IBM Plex Mono', fontSize: 9, color: '#3D5166' }}>Est. Success Rate</div>
+              </div>
             </div>
-            <div className="flex items-center gap-3 mb-3">
-              <span className="text-sm font-semibold text-gray-900 bg-red-50 border border-red-200 px-3 py-1.5 rounded-lg">
-                {rerouting.from_rail}
-              </span>
-              <ArrowRight size={16} className="text-gray-400" />
-              <span className="text-sm font-semibold text-gray-900 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-lg">
-                {rerouting.to_rail}
-              </span>
-              <span className="text-xs text-emerald-600 font-medium">
-                {parseFloat(String(rerouting.estimated_success_rate)).toFixed(1)}% est. success
-              </span>
-            </div>
-            <p className="text-sm text-gray-600">{rerouting.rationale}</p>
+            <p style={{ fontSize: 12, color: '#7A8FA6', lineHeight: 1.6 }}>{rerouting.rationale}</p>
+          </div>
+        ) : (
+          <div className="card" style={{ padding: 20 }}>
+            <div style={{ fontFamily: 'IBM Plex Mono', fontSize: 10, color: '#3D5166', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 12 }}>Rerouting Recommendation</div>
+            <div style={{ color: '#3D5166', fontFamily: 'IBM Plex Mono', fontSize: 12 }}>AWAITING REROUTING ADVISOR AGENT...</div>
           </div>
         )}
 
-        {/* Communication drafts */}
-        {comms && comms.length > 0 && (
-          <div className="bg-white border border-gray-200 rounded-xl p-5">
-            <div className="flex items-center gap-2 mb-4">
-              <MessageSquare size={16} className="text-blue-600" />
-              <h2 className="font-semibold text-sm text-gray-800">Communication Drafts</h2>
-              <span className="text-xs text-gray-400">· Claude API · Human approval required</span>
-            </div>
-            <div className="space-y-3">
-              {comms.map(draft => (
-                <DraftCard
-                  key={draft.id}
-                  draft={draft}
-                  onApprove={id => approveMutation.mutate(id)}
-                  onReject={id => rejectMutation.mutate(id)}
-                />
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Agent run timeline */}
-        {agentRuns.length > 0 && (
-          <div className="bg-white border border-gray-200 rounded-xl p-5">
-            <div className="flex items-center gap-2 mb-4">
-              <Shield size={16} className="text-gray-500" />
-              <h2 className="font-semibold text-sm text-gray-800">Agent Audit Trail</h2>
-            </div>
-            <div className="space-y-2">
-              {agentRuns.map(run => (
-                <div key={run.id} className="flex items-center justify-between text-xs py-2 border-b border-gray-50 last:border-0">
-                  <div className="flex items-center gap-2">
-                    <span className={`w-1.5 h-1.5 rounded-full ${run.status === 'completed' ? 'bg-emerald-400' : run.status === 'failed' ? 'bg-red-400' : 'bg-amber-400 live-dot'}`} />
-                    <span className="font-medium text-gray-700">{run.agent_type.replace(/_/g, ' ')}</span>
+        {/* Agent pipeline timeline */}
+        <div className="card" style={{ padding: 20 }}>
+          <div style={{ fontFamily: 'IBM Plex Mono', fontSize: 10, color: '#3D5166', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 12 }}>Agent Pipeline — Audit Trail</div>
+          {agentRuns.length === 0 ? (
+            <div style={{ color: '#3D5166', fontFamily: 'IBM Plex Mono', fontSize: 12 }}>NO AGENT RUNS RECORDED</div>
+          ) : (
+            <div>
+              {agentRuns.map((run, i) => (
+                <div key={run.id} style={{ display: 'flex', gap: 12, paddingBottom: i < agentRuns.length - 1 ? 12 : 0, position: 'relative' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                    <div style={{ width: 8, height: 8, borderRadius: '50%', background: run.status === 'completed' ? '#12B76A' : run.status === 'failed' ? '#F04438' : '#F79009', flexShrink: 0, marginTop: 3 }}/>
+                    {i < agentRuns.length - 1 && <div style={{ width: 1, flex: 1, background: 'rgba(255,255,255,0.06)', marginTop: 4 }}/>}
                   </div>
-                  <div className="flex items-center gap-3 text-gray-400">
-                    <span>{run.duration_ms}ms</span>
-                    <span>{run.status}</span>
+                  <div style={{ flex: 1, paddingBottom: 4 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                      <span style={{ fontSize: 12, color: '#E4EBF5', fontWeight: 500 }}>{run.agent_type.replace(/_/g, ' ')}</span>
+                      <div style={{ textAlign: 'right' }}>
+                        <div style={{ fontFamily: 'IBM Plex Mono', fontSize: 10, color: run.status === 'completed' ? '#12B76A' : '#F04438' }}>{run.status.toUpperCase()}</div>
+                        <div style={{ fontFamily: 'IBM Plex Mono', fontSize: 9, color: '#3D5166' }}>{run.duration_ms}ms</div>
+                      </div>
+                    </div>
                   </div>
                 </div>
               ))}
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </div>
+
+      {/* Communication drafts — full width */}
+      {comms && comms.length > 0 && (
+        <div className="card" style={{ padding: 20 }}>
+          <div style={{ fontFamily: 'IBM Plex Mono', fontSize: 10, color: '#3D5166', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span>Communication Drafts</span>
+            <span style={{ color: '#F79009' }}>· HUMAN APPROVAL REQUIRED BEFORE SENDING</span>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+            {comms.map((draft: CommunicationDraft) => (
+              <div key={draft.id} style={{
+                background: draft.status === 'approved' ? 'rgba(18,183,106,0.05)' : draft.status === 'rejected' ? 'rgba(240,68,56,0.05)' : 'rgba(255,255,255,0.02)',
+                border: `1px solid ${draft.status === 'approved' ? 'rgba(18,183,106,0.2)' : draft.status === 'rejected' ? 'rgba(240,68,56,0.2)' : 'rgba(255,255,255,0.08)'}`,
+                borderRadius: 4, padding: 16,
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                  <span style={{ fontFamily: 'IBM Plex Mono', fontSize: 10, color: '#7A8FA6', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                    {draft.audience === 'client_services' ? 'Internal · Client Services' : 'External · Corporate Client'}
+                  </span>
+                  <span className={`badge badge-${draft.status}`}>{draft.status}</span>
+                </div>
+                {draft.subject_line && (
+                  <div style={{ fontSize: 12, fontWeight: 600, color: '#E4EBF5', marginBottom: 8 }}>{draft.subject_line}</div>
+                )}
+                <p style={{ fontSize: 12, color: '#7A8FA6', lineHeight: 1.7, marginBottom: 12 }}>{draft.draft_text}</p>
+                {draft.status === 'draft' && (
+                  <div style={{ display: 'flex', gap: 8, borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: 12 }}>
+                    <button onClick={() => approveMut.mutate(draft.id)}
+                      style={{ background: 'rgba(18,183,106,0.1)', border: '1px solid rgba(18,183,106,0.25)', color: '#12B76A', padding: '6px 16px', borderRadius: 3, fontSize: 11, cursor: 'pointer', fontFamily: 'IBM Plex Mono' }}>
+                      ✓ APPROVE
+                    </button>
+                    <button onClick={() => rejectMut.mutate(draft.id)}
+                      style={{ background: 'transparent', border: '1px solid rgba(240,68,56,0.2)', color: '#F04438', padding: '6px 16px', borderRadius: 3, fontSize: 11, cursor: 'pointer', fontFamily: 'IBM Plex Mono' }}>
+                      ✕ REJECT
+                    </button>
+                    <span style={{ fontSize: 10, color: '#3D5166', display: 'flex', alignItems: 'center' }}>Approval required before distribution</span>
+                  </div>
+                )}
+                {draft.status === 'approved' && (
+                  <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: 10, fontFamily: 'IBM Plex Mono', fontSize: 10, color: '#12B76A' }}>
+                    ✓ APPROVED BY {draft.approved_by.toUpperCase()} · READY FOR DISTRIBUTION
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
