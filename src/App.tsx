@@ -7,7 +7,7 @@ import { Compliance } from './pages/Compliance'
 import { useRailWebSocket } from './hooks/useWebSocket'
 
 const queryClient = new QueryClient({
-  defaultOptions: { queries: { retry: 1, staleTime: 10000 } },
+  defaultOptions: { queries: { retry: 2, staleTime: 10000, refetchOnWindowFocus: true } },
 })
 
 type Page = 'dashboard' | 'incidents' | 'compliance'
@@ -23,7 +23,7 @@ function AppInner() {
   }
 
   return (
-    <div className="min-h-screen bg-[#F4F5F7]">
+    <div style={{ minHeight: '100vh', background: '#0A1628' }}>
       <Navbar
         currentPage={page}
         onNavigate={(p) => { setPage(p); setSelectedIncidentId(null) }}
