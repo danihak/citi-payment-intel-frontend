@@ -16,7 +16,10 @@ function timeAgo(d: string) {
 function timeDiff(a: string, b: string) {
   const diff = Math.abs(new Date(b).getTime() - new Date(a).getTime()) / 1000
   if (diff < 60) return `${Math.round(diff)}s`
-  return `${Math.round(diff/60)}m ${Math.round(diff%60)}s`
+  if (diff < 3600) return `${Math.round(diff/60)}m ${Math.round(diff%60)}s`
+  const h = Math.floor(diff/3600)
+  const m = Math.round((diff%3600)/60)
+  return `${h}h ${m}m`
 }
 
 export function IncidentDetail({ incidentId, onBack }: Props) {
@@ -38,7 +41,19 @@ export function IncidentDetail({ incidentId, onBack }: Props) {
   const confidence = parseFloat(String(incident.confidence_score))
 
   const chartData = (history || []).slice(0, 60).reverse().map((s, i) => ({ i, rate: parseFloat(String(s.success_rate)) }))
-  const detectedIdx = chartData.length - 10
+  // Find where the drop actually starts
+  const detectedIdx = (() => {
+    if (chartData.length === 0) return -1
+    for (let i = 1; i < chartData.length; i++) {
+      if (chartData[i].rate < 95 && chartData[i - 1].rate >= 95) return i
+    }
+    let maxDrop = 0, dropIdx = Math.floor(chartData.length * 0.65)
+    for (let i = 1; i < chartData.length; i++) {
+      const drop = chartData[i - 1].rate - chartData[i].rate
+      if (drop > maxDrop) { maxDrop = drop; dropIdx = i }
+    }
+    return dropIdx
+  })()
 
   const classColors: Record<string, string> = { NPCI_SIDE: '#F04438', BANK_SIDE: '#F79009', FALSE_POSITIVE: '#12B76A', UNKNOWN: '#7A8FA6' }
   const classLabels: Record<string, string> = { NPCI_SIDE: 'NPCI Infrastructure Issue', BANK_SIDE: 'Bank-side Failure', FALSE_POSITIVE: 'False Positive', UNKNOWN: 'Under Investigation' }
