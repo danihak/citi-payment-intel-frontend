@@ -136,7 +136,7 @@ export function Compliance() {
                 <span style={{ fontFamily: 'IBM Plex Mono', fontSize: 11, color: '#7A8FA6' }}>{apiLabels[v.api_name] || v.api_name}</span>
                 <span style={{ fontSize: 11, color: '#7A8FA6' }}>{v.description}</span>
                 <span style={{ fontFamily: 'IBM Plex Mono', fontSize: 11, color: '#E4EBF5' }}>{parseFloat(String(v.tps_observed)).toFixed(2)} / {parseFloat(String(v.tps_limit)).toFixed(1)}</span>
-                <span style={{ fontFamily: 'IBM Plex Mono', fontSize: 10, color: '#3D5166' }}>{new Date(v.occurred_at).toLocaleTimeString()}</span>
+                <span style={{ fontFamily: 'IBM Plex Mono', fontSize: 10, color: '#6B7280' }}>{(() => { const diff = (Date.now() - new Date(v.occurred_at).getTime()) / 1000; if (diff < 3600) return `${Math.round(diff/60)}m ago`; if (diff < 86400) return `${Math.round(diff/3600)}h ago`; return `${Math.round(diff/86400)}d ago` })()}</span>
               </div>
             ))}
           </div>

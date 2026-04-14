@@ -75,7 +75,8 @@ function timeAgo(d: string) {
   const diff = (Date.now() - new Date(d).getTime()) / 1000
   if (diff < 60) return `${Math.round(diff)}s ago`
   if (diff < 3600) return `${Math.round(diff/60)}m ago`
-  return `${Math.round(diff/3600)}h ago`
+  if (diff < 86400) return `${Math.round(diff/3600)}h ago`
+  return `${Math.round(diff/86400)}d ago`
 }
 
 export function Dashboard({ onSelectIncident }: DashboardProps) {
@@ -242,7 +243,7 @@ export function Dashboard({ onSelectIncident }: DashboardProps) {
             <div style={{ padding: 32, textAlign: 'center', color: '#3D5166', fontFamily: 'IBM Plex Mono', fontSize: 12 }}>NO INCIDENTS RECORDED</div>
           ) : (
             <div>
-              {incidents.slice(0, 8).map((inc, i) => {
+              {incidents.slice(0, 20).map((inc, i) => {
                 const isActive = inc.status === 'active' || inc.status === 'investigating'
                 return (
                   <div key={inc.id} onClick={() => onSelectIncident(inc.id)}

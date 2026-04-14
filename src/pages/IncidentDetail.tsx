@@ -9,7 +9,8 @@ function timeAgo(d: string) {
   const diff = (Date.now() - new Date(d).getTime()) / 1000
   if (diff < 60) return `${Math.round(diff)}s ago`
   if (diff < 3600) return `${Math.round(diff/60)}m ago`
-  return `${Math.round(diff/3600)}h ago`
+  if (diff < 86400) return `${Math.round(diff/3600)}h ago`
+  return `${Math.round(diff/86400)}d ago`
 }
 
 function timeDiff(a: string, b: string) {
