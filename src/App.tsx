@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Navbar } from './components/Navbar'
 import { Dashboard } from './pages/Dashboard'
 import { IncidentDetail } from './pages/IncidentDetail'
+import { IncidentList } from './pages/IncidentList'
 import { Compliance } from './pages/Compliance'
 import { useRailWebSocket } from './hooks/useWebSocket'
 
@@ -32,9 +33,11 @@ function AppInner() {
       <main>
         {page === 'dashboard' && <Dashboard onSelectIncident={handleSelectIncident} />}
         {page === 'incidents' && selectedIncidentId && (
-          <IncidentDetail incidentId={selectedIncidentId} onBack={() => { setSelectedIncidentId(null); setPage('dashboard') }} />
+          <IncidentDetail incidentId={selectedIncidentId} onBack={() => setSelectedIncidentId(null)} />
         )}
-        {page === 'incidents' && !selectedIncidentId && <Dashboard onSelectIncident={handleSelectIncident} />}
+        {page === 'incidents' && !selectedIncidentId && (
+          <IncidentList onSelectIncident={handleSelectIncident} />
+        )}
         {page === 'compliance' && <Compliance />}
       </main>
     </div>
