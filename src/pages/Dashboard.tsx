@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, LineChart, Line } from 'recharts'
 import { fetchRailStatus, fetchIncidents, fetchComplianceDashboard, fetchRailHistory, simulateIncident, triggerPoll } from '../api'
@@ -116,11 +117,36 @@ export function Dashboard({ onSelectIncident }: DashboardProps) {
   const { data: compliance } = useQuery({ queryKey: ['compliance'], queryFn: fetchComplianceDashboard, refetchInterval: 30000 })
   const { data: upiHistory } = useQuery({ queryKey: ['rail-history', 'UPI'], queryFn: () => fetchRailHistory('UPI'), refetchInterval: 30000 })
 
+  const [simError, setSimError] = useState<string | null>(null)
+  const [simSuccess, setSimSuccess] = useState<string | null>(null)
+
   const simMutation = useMutation({
     mutationFn: () => simulateIncident('UPI', 71.3),
-    onSuccess: () => {
-      setTimeout(() => qc.invalidateQueries({ queryKey: ['incidents'] }), 3000)
-      setTimeout(() => qc.invalidateQueries({ queryKey: ['rails'] }), 1000)
+    onSuccess: (data) => {
+      setSimError(null)
+      setSimSuccess(
+        data.status === 'incident_refreshed'
+          ? 'Existing simulated incident refreshed.'
+          : 'Incident fired — opening detail.'
+      )
+      // Invalidate immediately — the backend commits the incident synchronously now,
+      // so the new state is live the moment this returns 200.
+      qc.invalidateQueries({ queryKey: ['rails'] })
+      qc.invalidateQueries({ queryKey: ['incidents'] })
+      qc.invalidateQueries({ queryKey: ['rail-history', 'UPI'] })
+      // Navigate into the new incident's detail page so the user sees the result.
+      // Slight delay so the success message is visible briefly first.
+      if (data.status === 'incident_triggered') {
+        setTimeout(() => onSelectIncident(data.incident_id), 700)
+      }
+      // Auto-clear the toast after 4 seconds
+      setTimeout(() => setSimSuccess(null), 4000)
+    },
+    onError: (err: unknown) => {
+      setSimSuccess(null)
+      const msg = err instanceof Error ? err.message : 'Unknown error — check network tab.'
+      setSimError(`Simulate failed: ${msg}`)
+      setTimeout(() => setSimError(null), 6000)
     },
   })
 
@@ -196,6 +222,22 @@ export function Dashboard({ onSelectIncident }: DashboardProps) {
             <span style={{ color: '#7A8FA6', fontSize: 12 }}>5 payment rails operating within normal parameters</span>
           </div>
           <span style={{ color: '#3D5166', fontSize: 11, fontFamily: 'IBM Plex Mono' }}>Updated {dataUpdatedAt ? new Date(dataUpdatedAt).toLocaleTimeString() : '—'}</span>
+        </div>
+      )}
+
+      {/* Simulate-button feedback toast */}
+      {(simSuccess || simError) && (
+        <div style={{
+          background: simError ? 'rgba(240,68,56,0.08)' : 'rgba(18,183,106,0.08)',
+          border: `1px solid ${simError ? 'rgba(240,68,56,0.25)' : 'rgba(18,183,106,0.25)'}`,
+          borderLeft: `3px solid ${simError ? '#F04438' : '#12B76A'}`,
+          borderRadius: 4, padding: '8px 14px', marginBottom: 16,
+          fontFamily: 'IBM Plex Mono', fontSize: 11,
+          color: simError ? '#F04438' : '#12B76A',
+          display: 'flex', alignItems: 'center', gap: 8,
+        }}>
+          <span style={{ width: 6, height: 6, borderRadius: '50%', background: simError ? '#F04438' : '#12B76A', display: 'inline-block' }} />
+          {simError || simSuccess}
         </div>
       )}
 

@@ -26,8 +26,18 @@ export const fetchIncident = (id: string): Promise<Incident> =>
 export const resolveIncident = (id: string): Promise<unknown> =>
   api.post(`/api/v1/incidents/${id}/resolve/`).then(r => r.data)
 
-export const simulateIncident = (rail: string, successRate: number): Promise<unknown> =>
-  api.post('/api/v1/incidents/simulate/', { rail, success_rate: successRate }).then(r => r.data)
+export interface SimulateIncidentResponse {
+  status: 'incident_triggered' | 'incident_refreshed'
+  incident_id: string
+  rail: string
+  severity?: string
+  classification?: string
+  success_rate?: number
+  note?: string
+}
+
+export const simulateIncident = (rail: string, successRate: number): Promise<SimulateIncidentResponse> =>
+  api.post<SimulateIncidentResponse>('/api/v1/incidents/simulate/', { rail, success_rate: successRate }).then(r => r.data)
 
 export const fetchComplianceDashboard = (): Promise<ComplianceMetric[]> =>
   api.get<ComplianceMetric[]>('/api/v1/compliance/dashboard/').then(r => r.data)
