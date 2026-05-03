@@ -213,7 +213,50 @@ export function IncidentDetail({ incidentId, onBack }: Props) {
         ) : (
           <div className="card" style={{ padding: 20 }}>
             <div style={{ fontFamily: 'IBM Plex Mono', fontSize: 10, color: '#3D5166', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 12 }}>Rerouting Recommendation</div>
-            <div style={{ color: '#3D5166', fontFamily: 'IBM Plex Mono', fontSize: 12 }}>AWAITING REROUTING ADVISOR AGENT...</div>
+            {(() => {
+              // Don't show 'AWAITING...' for incidents where the rerouting agent
+              // deliberately doesn't run. Below the dotted-line threshold, the
+              // system correctly decided no rerouting was warranted — saying
+              // 'awaiting' makes it look like the pipeline is stuck.
+              if (incident.classification === 'FALSE_POSITIVE') {
+                return (
+                  <>
+                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: '#12B76A', fontFamily: 'IBM Plex Mono', fontSize: 11, padding: '4px 10px', background: 'rgba(18,183,106,0.08)', border: '1px solid rgba(18,183,106,0.2)', borderRadius: 3, marginBottom: 10 }}>
+                      <span style={{ width: 5, height: 5, borderRadius: '50%', background: '#12B76A', display: 'inline-block' }} />
+                      No rerouting required
+                    </div>
+                    <p style={{ fontSize: 12, color: '#7A8FA6', lineHeight: 1.6, marginTop: 0 }}>
+                      Classified as a false positive — the rail was not actually degraded. No client-facing action needed; the alert was driven by a monitoring artifact.
+                    </p>
+                  </>
+                )
+              }
+              if (incident.severity === 'low') {
+                return (
+                  <>
+                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: '#7A8FA6', fontFamily: 'IBM Plex Mono', fontSize: 11, padding: '4px 10px', background: 'rgba(122,143,166,0.08)', border: '1px solid rgba(122,143,166,0.2)', borderRadius: 3, marginBottom: 10 }}>
+                      <span style={{ width: 5, height: 5, borderRadius: '50%', background: '#7A8FA6', display: 'inline-block' }} />
+                      Below action threshold
+                    </div>
+                    <p style={{ fontSize: 12, color: '#7A8FA6', lineHeight: 1.6, marginTop: 0 }}>
+                      Disruption is below the threshold that warrants a rerouting recommendation. Logged for the audit trail; no action required.
+                    </p>
+                  </>
+                )
+              }
+              if (isActive) {
+                return (
+                  <div style={{ color: '#3D5166', fontFamily: 'IBM Plex Mono', fontSize: 12 }}>
+                    AWAITING REROUTING ADVISOR AGENT...
+                  </div>
+                )
+              }
+              return (
+                <p style={{ fontSize: 12, color: '#7A8FA6', lineHeight: 1.6, marginTop: 0 }}>
+                  No rerouting was triggered for this incident.
+                </p>
+              )
+            })()}
           </div>
         )}
 
