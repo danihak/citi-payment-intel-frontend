@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { AreaChart, Area, ResponsiveContainer, Tooltip, ReferenceLine, XAxis } from 'recharts'
-import { fetchIncident, fetchCommunications, approveDraft, rejectDraft, resolveIncident, fetchRailHistory } from '../api'
+import { fetchIncident, fetchCommunications, approveDraft, rejectDraft, resolveIncident, fetchIncidentSnapshotHistory } from '../api'
 import type { CommunicationDraft } from '../types'
 
 interface Props { incidentId: string; onBack: () => void }
@@ -26,7 +26,12 @@ export function IncidentDetail({ incidentId, onBack }: Props) {
   const qc = useQueryClient()
   const { data: incident, isLoading } = useQuery({ queryKey: ['incident', incidentId], queryFn: () => fetchIncident(incidentId), refetchInterval: 10000 })
   const { data: comms } = useQuery({ queryKey: ['communications', incidentId], queryFn: () => fetchCommunications(incidentId), refetchInterval: 10000 })
-  const { data: history } = useQuery({ queryKey: ['rail-history', incident?.rail_name], queryFn: () => fetchRailHistory(incident?.rail_name || 'UPI'), enabled: !!incident })
+  const { data: snapshotHistory } = useQuery({
+    queryKey: ['incident-snapshots', incidentId],
+    queryFn: () => fetchIncidentSnapshotHistory(incidentId),
+    enabled: !!incident,
+    refetchInterval: incident && (incident.status === 'active' || incident.status === 'investigating') ? 10000 : false,
+  })
 
   const approveMut = useMutation({ mutationFn: (id: string) => approveDraft(id, 'ops_analyst'), onSuccess: () => qc.invalidateQueries({ queryKey: ['communications', incidentId] }) })
   const rejectMut = useMutation({ mutationFn: (id: string) => rejectDraft(id, 'Needs revision'), onSuccess: () => qc.invalidateQueries({ queryKey: ['communications', incidentId] }) })
@@ -40,27 +45,50 @@ export function IncidentDetail({ incidentId, onBack }: Props) {
   const agentRuns = incident.agent_runs || []
   const confidence = parseFloat(String(incident.confidence_score))
 
-  const chartData = (history || []).slice(0, 60).reverse().map((s, i) => ({ i, rate: parseFloat(String(s.success_rate)) }))
-  // Find where the drop actually starts
+  // Build chart data from the incident-specific snapshot window. This shows the
+  // actual dip at the time the incident happened, not whatever the rail is doing
+  // right now (which for a resolved incident from 2h ago would just be a flat
+  // baseline that contradicts the classifier reasoning).
+  const chartData = (snapshotHistory?.snapshots || []).map((s, i) => ({
+    i,
+    rate: s.success_rate,
+    snapshot_at: s.snapshot_at,
+  }))
+
+  // Find the index of the snapshot closest to detected_at — that's where the
+  // dotted DETECTED line goes on the chart.
   const detectedIdx = (() => {
-    if (chartData.length === 0) return -1
-    for (let i = 1; i < chartData.length; i++) {
-      if (chartData[i].rate < 95 && chartData[i - 1].rate >= 95) return i
+    if (chartData.length === 0 || !snapshotHistory) return -1
+    const detectedTs = new Date(snapshotHistory.detected_at).getTime()
+    let bestIdx = -1
+    let bestDelta = Infinity
+    for (let i = 0; i < chartData.length; i++) {
+      const delta = Math.abs(new Date(chartData[i].snapshot_at).getTime() - detectedTs)
+      if (delta < bestDelta) { bestDelta = delta; bestIdx = i }
     }
-    let maxDrop = 0, dropIdx = Math.floor(chartData.length * 0.65)
-    for (let i = 1; i < chartData.length; i++) {
-      const drop = chartData[i - 1].rate - chartData[i].rate
-      if (drop > maxDrop) { maxDrop = drop; dropIdx = i }
-    }
-    return dropIdx
+    return bestIdx
   })()
+
+  // Trough: lowest rate observed in the dip window. This is what we estimate
+  // failed-transaction count from — using current rate (the old approach) gave
+  // ~0.4k for every resolved incident regardless of severity.
+  const troughRate = chartData.length > 0
+    ? Math.min(...chartData.map(c => c.rate))
+    : 100
+  // Per-rail TPM baseline for impact estimation. UPI is by far the highest volume.
+  const RAIL_TPM: Record<string, number> = { UPI: 14200, IMPS: 3800, RTGS: 180, NEFT: 620, NACH: 290 }
+  const tpm = RAIL_TPM[incident.rail_name] ?? 5000
+  // Duration in minutes — for resolved incidents, the actual duration; for active,
+  // time elapsed since detection.
+  const incidentDurationMin = incident.resolved_at
+    ? Math.max(1, (new Date(incident.resolved_at).getTime() - new Date(incident.detected_at).getTime()) / 60000)
+    : Math.max(1, (Date.now() - new Date(incident.detected_at).getTime()) / 60000)
+  // Failed txns ≈ tpm × duration × failure_rate
+  const estimatedFailedTxns = Math.round(tpm * incidentDurationMin * (100 - troughRate) / 100)
 
   const classColors: Record<string, string> = { NPCI_SIDE: '#F04438', BANK_SIDE: '#F79009', FALSE_POSITIVE: '#12B76A', UNKNOWN: '#7A8FA6' }
   const classLabels: Record<string, string> = { NPCI_SIDE: 'NPCI Infrastructure Issue', BANK_SIDE: 'Bank-side Failure', FALSE_POSITIVE: 'False Positive', UNKNOWN: 'Under Investigation' }
   const classColor = classColors[incident.classification] || '#7A8FA6'
-
-  // Estimated impact
-  const estimatedFailedTxns = Math.round((100 - (chartData[chartData.length - 1]?.rate || 88)) / 100 * 14200 * 5)
 
   return (
     <div style={{ maxWidth: 1400, margin: '0 auto', padding: '24px 24px', position: 'relative', zIndex: 1 }}>

@@ -50,6 +50,27 @@ export const fetchCommunications = (incidentId?: string): Promise<CommunicationD
     params: incidentId ? { incident_id: incidentId } : undefined
   }).then(r => r.data)
 
+export interface IncidentSnapshotHistory {
+  incident_id: string
+  rail_name: string
+  detected_at: string
+  resolved_at: string | null
+  window_start: string
+  window_end: string
+  snapshots: Array<{
+    rail_name: string
+    success_rate: number
+    latency_ms: number
+    transactions_per_min: number
+    status: string
+    error_rate: number
+    snapshot_at: string
+  }>
+}
+
+export const fetchIncidentSnapshotHistory = (id: string): Promise<IncidentSnapshotHistory> =>
+  api.get<IncidentSnapshotHistory>(`/api/v1/incidents/${id}/snapshot-history/`).then(r => r.data)
+
 export const approveDraft = (id: string, approvedBy = 'ops_analyst'): Promise<unknown> =>
   api.post(`/api/v1/communications/${id}/approve/`, { approved_by: approvedBy }).then(r => r.data)
 
