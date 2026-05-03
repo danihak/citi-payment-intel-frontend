@@ -20,7 +20,11 @@ function statusColor(s: string) {
   return '#F04438'
 }
 
-function RailMiniCard({ rail }: { rail: RailStatus }) {
+function RailMiniCard({ rail, activeIncident, onSelectIncident }: {
+  rail: RailStatus
+  activeIncident?: { id: string; severity: string; title: string }
+  onSelectIncident?: (id: string) => void
+}) {
   const { data: history } = useQuery({
     queryKey: ['rail-history', rail.rail_name],
     queryFn: () => fetchRailHistory(rail.rail_name),
@@ -31,6 +35,13 @@ function RailMiniCard({ rail }: { rail: RailStatus }) {
   const rate = parseFloat(String(rail.success_rate))
   const c = statusColor(rail.status)
 
+  // Severity colour for the INVESTIGATING tag
+  const sevColor = activeIncident
+    ? (activeIncident.severity === 'critical' ? '#F04438'
+       : activeIncident.severity === 'high'    ? '#F79009'
+       :                                          '#00A3E0')
+    : undefined
+
   return (
     <div className="card" style={{ flex: 1, padding: 16, borderLeft: `3px solid ${c}` }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
@@ -40,6 +51,25 @@ function RailMiniCard({ rail }: { rail: RailStatus }) {
         </div>
         <span className={`badge badge-${rail.status}`}>{rail.status}</span>
       </div>
+      {activeIncident && (
+        <button
+          onClick={() => onSelectIncident?.(activeIncident.id)}
+          title={activeIncident.title}
+          style={{
+            display: 'inline-flex', alignItems: 'center', gap: 5,
+            background: `rgba(${sevColor === '#F04438' ? '240,68,56' : sevColor === '#F79009' ? '247,144,9' : '0,163,224'}, 0.12)`,
+            border: `1px solid ${sevColor}40`,
+            color: sevColor,
+            padding: '2px 7px', borderRadius: 3,
+            fontFamily: 'IBM Plex Mono', fontSize: 9, fontWeight: 500,
+            letterSpacing: '0.06em', textTransform: 'uppercase',
+            cursor: 'pointer', marginBottom: 8,
+          }}
+        >
+          <span style={{ width: 5, height: 5, borderRadius: '50%', background: sevColor, display: 'inline-block' }} />
+          Investigating · {activeIncident.severity}
+        </button>
+      )}
       <div style={{ height: 40, marginBottom: 8 }}>
         {chartData.length > 0 && (
           <ResponsiveContainer width="100%" height="100%">
@@ -100,6 +130,24 @@ export function Dashboard({ onSelectIncident }: DashboardProps) {
   const totalRails = rails?.length ?? 5
   const healthScore = Math.round((healthyRails / totalRails) * 100)
 
+  // Banner picks highest-severity active incident, not most-recent.
+  // Without this, the banner picks whichever active incident was detected last,
+  // even if a higher-severity incident is still unresolved on another rail.
+  const SEVERITY_RANK: Record<string, number> = { critical: 4, high: 3, medium: 2, low: 1 }
+  const bannerIncident = [...activeIncidents].sort((a, b) => {
+    const sevDiff = (SEVERITY_RANK[b.severity] ?? 0) - (SEVERITY_RANK[a.severity] ?? 0)
+    if (sevDiff !== 0) return sevDiff
+    return new Date(b.detected_at).getTime() - new Date(a.detected_at).getTime()
+  })[0]
+
+  // Pick a status verb that matches the actual rail state of the banner incident
+  // (DOWN if the rail is currently down, otherwise DEGRADED) so banner and rail
+  // card never disagree on phrasing.
+  const bannerRailState = bannerIncident
+    ? rails?.find(r => r.rail_name === bannerIncident.rail_name)?.status
+    : undefined
+  const bannerStateLabel = bannerRailState === 'down' ? 'DOWN' : 'DEGRADED'
+
   // Build 2-hour UPI volume chart
   const volumeData = (upiHistory || []).slice(0, 48).reverse().map((s, i) => ({
     t: i,
@@ -112,20 +160,31 @@ export function Dashboard({ onSelectIncident }: DashboardProps) {
     ? Math.round((compliance.filter(m => m.is_compliant).length / compliance.length) * 100)
     : 100
 
+  // Map of rail_name → active incident, used by RailMiniCard to surface an
+  // 'INVESTIGATING' tag when a rail looks healthy but has an open incident.
+  const incidentByRail: Record<string, typeof activeIncidents[number] | undefined> = {}
+  for (const inc of activeIncidents) {
+    // Keep the highest-severity active incident per rail
+    const existing = incidentByRail[inc.rail_name]
+    if (!existing || (SEVERITY_RANK[inc.severity] ?? 0) > (SEVERITY_RANK[existing.severity] ?? 0)) {
+      incidentByRail[inc.rail_name] = inc
+    }
+  }
+
   return (
     <div style={{ ...S.page, position: 'relative', zIndex: 1 }}>
 
       {/* Alert banner */}
-      {activeIncidents.length > 0 ? (
+      {bannerIncident ? (
         <div style={{ background: 'rgba(240,68,56,0.08)', border: '1px solid rgba(240,68,56,0.2)', borderLeft: '3px solid #F04438', borderRadius: 4, padding: '10px 16px', marginBottom: 20, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <span className="live-dot" style={{ width: 8, height: 8, borderRadius: '50%', background: '#F04438', display: 'inline-block' }}/>
             <span style={{ color: '#F04438', fontFamily: 'IBM Plex Mono', fontSize: 12, fontWeight: 500 }}>
-              ACTIVE INCIDENT — {activeIncidents[0]?.rail_name} DEGRADED
+              ACTIVE INCIDENT — {bannerIncident.rail_name} {bannerStateLabel}
             </span>
-            <span style={{ color: '#7A8FA6', fontSize: 12 }}>{activeIncidents[0]?.title}</span>
+            <span style={{ color: '#7A8FA6', fontSize: 12 }}>{bannerIncident.title}</span>
           </div>
-          <button onClick={() => onSelectIncident(activeIncidents[0]?.id)} style={{ background: 'rgba(240,68,56,0.15)', border: '1px solid rgba(240,68,56,0.3)', color: '#F04438', padding: '4px 12px', borderRadius: 3, fontSize: 11, cursor: 'pointer', fontFamily: 'IBM Plex Mono' }}>
+          <button onClick={() => onSelectIncident(bannerIncident.id)} style={{ background: 'rgba(240,68,56,0.15)', border: '1px solid rgba(240,68,56,0.3)', color: '#F04438', padding: '4px 12px', borderRadius: 3, fontSize: 11, cursor: 'pointer', fontFamily: 'IBM Plex Mono' }}>
             VIEW →
           </button>
         </div>
@@ -147,7 +206,7 @@ export function Dashboard({ onSelectIncident }: DashboardProps) {
           { label: 'Active Incidents', val: String(activeIncidents.length), sub: activeIncidents.length > 0 ? 'Requires attention' : 'No active issues', color: activeIncidents.length > 0 ? '#F04438' : '#12B76A' },
           { label: 'Root Cause Target', val: '<2 min', sub: '↓ from 18–25 min', color: '#00A3E0' },
           { label: 'Resolved Today', val: String(resolvedToday.length), sub: 'Incidents closed', color: '#7A8FA6' },
-          { label: 'OC-215 Compliance', val: `${complianceScore}%`, sub: 'All APIs within limits', color: complianceScore === 100 ? '#12B76A' : '#F04438' },
+          { label: 'OC-215 Status', val: `${complianceScore}%`, sub: complianceScore === 100 ? 'Current TPS within limits' : 'Current breach — see audit log', color: complianceScore === 100 ? '#12B76A' : '#F04438' },
           { label: 'UPI Success Rate', val: rails?.find(r => r.rail_name === 'UPI') ? `${parseFloat(String(rails.find(r => r.rail_name === 'UPI')!.success_rate)).toFixed(1)}%` : '—', sub: 'Primary rail', color: statusColor(rails?.find(r => r.rail_name === 'UPI')?.status || 'healthy') },
         ].map(k => (
           <div key={k.label} className="card" style={{ padding: '14px 16px' }}>
@@ -174,7 +233,14 @@ export function Dashboard({ onSelectIncident }: DashboardProps) {
           </div>
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12 }}>
-          {rails ? rails.map(r => <RailMiniCard key={r.rail_name} rail={r} />) : Array(5).fill(0).map((_, i) => (
+          {rails ? rails.map(r => (
+            <RailMiniCard
+              key={r.rail_name}
+              rail={r}
+              activeIncident={incidentByRail[r.rail_name]}
+              onSelectIncident={onSelectIncident}
+            />
+          )) : Array(5).fill(0).map((_, i) => (
             <div key={i} className="card" style={{ height: 160, background: 'rgba(255,255,255,0.02)' }} />
           ))}
         </div>

@@ -9,6 +9,14 @@ export function Compliance() {
   const allCompliant = metrics?.every(m => m.is_compliant) ?? true
   const complianceScore = metrics ? Math.round((metrics.filter(m => m.is_compliant).length / metrics.length) * 100) : 100
 
+  // Compute a 30-day rolling violation count so the headline reconciles with
+  // the violation audit log shown below — without this, a reviewer sees '100%'
+  // at the top while the audit log shows multiple CRITICAL entries below.
+  const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000
+  const violations30d = (violations || []).filter(v => new Date(v.occurred_at).getTime() >= thirtyDaysAgo)
+  const criticalCount30d = violations30d.filter(v => v.severity === 'critical').length
+  const warningCount30d = violations30d.filter(v => v.severity === 'warning').length
+
   const apiLabels: Record<string, string> = {
     check_transaction_status: 'Check Txn Status',
     initiate_payment: 'Initiate Payment',
@@ -26,9 +34,19 @@ export function Compliance() {
           <h1 style={{ fontSize: 20, fontWeight: 600, color: '#E4EBF5', marginBottom: 4 }}>OC-215 Compliance Monitor</h1>
           <p style={{ fontSize: 12, color: '#7A8FA6' }}>Real-time monitoring of Citi's outgoing API call rates to NPCI · CERT-In audit trail from 2026</p>
         </div>
-        <div style={{ textAlign: 'right' }}>
-          <div style={{ fontFamily: 'IBM Plex Mono', fontSize: 36, fontWeight: 500, color: allCompliant ? '#12B76A' : '#F04438', lineHeight: 1 }}>{complianceScore}%</div>
-          <div style={{ fontFamily: 'IBM Plex Mono', fontSize: 10, color: '#3D5166', textTransform: 'uppercase', letterSpacing: '0.06em', marginTop: 4 }}>Compliance Score</div>
+        <div style={{ display: 'flex', gap: 32, alignItems: 'flex-start' }}>
+          <div style={{ textAlign: 'right' }}>
+            <div style={{ fontFamily: 'IBM Plex Mono', fontSize: 36, fontWeight: 500, color: allCompliant ? '#12B76A' : '#F04438', lineHeight: 1 }}>{complianceScore}%</div>
+            <div style={{ fontFamily: 'IBM Plex Mono', fontSize: 10, color: '#3D5166', textTransform: 'uppercase', letterSpacing: '0.06em', marginTop: 4 }}>Current Status</div>
+          </div>
+          <div style={{ width: 1, height: 48, background: 'rgba(255,255,255,0.08)', alignSelf: 'center' }} />
+          <div style={{ textAlign: 'right' }}>
+            <div style={{ fontFamily: 'IBM Plex Mono', fontSize: 36, fontWeight: 500, color: criticalCount30d > 0 ? '#F04438' : warningCount30d > 0 ? '#F79009' : '#12B76A', lineHeight: 1 }}>{violations30d.length}</div>
+            <div style={{ fontFamily: 'IBM Plex Mono', fontSize: 10, color: '#3D5166', textTransform: 'uppercase', letterSpacing: '0.06em', marginTop: 4 }}>30-Day Audit Trail</div>
+            <div style={{ fontFamily: 'IBM Plex Mono', fontSize: 10, color: '#7A8FA6', marginTop: 2 }}>
+              {criticalCount30d} critical · {warningCount30d} warning
+            </div>
+          </div>
         </div>
       </div>
 
